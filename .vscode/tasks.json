@@ -1,0 +1,105 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "SITL: Configure MAVLink UART2",
+      "detail": "Save MAVLink telemetry settings for UART2 (TCP 5762). Stop SITL first.",
+      "type": "shell",
+      "command": "mkdir -p .sitl && cd .sitl && ../bin/betaflight_2026.6.2_SITL --config ../config/sitl-mavlink.txt",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "SITL: Run",
+      "detail": "Start bundled Betaflight SITL with the saved .sitl configuration.",
+      "type": "shell",
+      "command": "mkdir -p .sitl && cd .sitl && exec stdbuf -oL ../bin/betaflight_2026.6.2_SITL",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^(?!)$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^\\[SITL\\]",
+          "endsPattern": "bind port 5761 for UART1"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "MAVLink: Read heartbeat",
+      "detail": "Read one heartbeat from running SITL on TCP 5762.",
+      "type": "shell",
+      "command": "uv run --with pymavlink python examples/mavlink_heartbeat.py tcp:127.0.0.1:5762",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "SITL: Run and choose MAVLink example",
+      "icon": {
+        "id": "play",
+        "color": "terminal.ansiGreen"
+      },
+      "detail": "Start SITL, then choose heartbeat or message-rate measurement. Configure UART2 first.",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "SITL: Run"
+      ],
+      "problemMatcher": [],
+      "type": "shell",
+      "command": "uv run --with pymavlink python ${input:mavlinkExample} tcp:127.0.0.1:5762",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Bullet: SITL MAVLink flight",
+      "detail": "Experimental MAVLink RC flight. Not working with bundled firmware; requires local Bullet workspace.",
+      "type": "shell",
+      "command": "uv run --project ${workspaceFolder}/../bullet_drone --locked --all-packages --all-extras --all-groups python ${workspaceFolder}/examples/mavlink_flight/main.py",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Bullet: SITL MSP MAVLink flight",
+      "detail": "Experimental Bullet flight with MSP RC and MAVLink telemetry. Requires flight extra and compatible sensor-only SITL.",
+      "type": "shell",
+      "command": "uv run --extra flight --locked python ${workspaceFolder}/examples/msp_mavlink_flight/main.py",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "mavlinkExample",
+      "type": "pickString",
+      "description": "Choose a MAVLink example",
+      "options": [
+        {
+          "label": "Heartbeat",
+          "value": "examples/mavlink_heartbeat.py"
+        },
+        {
+          "label": "Attitude and VFR_HUD rates",
+          "value": "examples/mavlink_rates.py"
+        }
+      ],
+      "default": "examples/mavlink_heartbeat.py"
+    }
+  ]
+}
