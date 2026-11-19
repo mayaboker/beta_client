@@ -2,11 +2,47 @@ import unittest
 from unittest.mock import Mock, patch
 
 from beta_client.entities import RcChannels
-from beta_client.msp import build_rc_message, send_rc
+from beta_client.msp import build_rc_message, read_board_identifier, send_rc
 from beta_client.transport import SerialTransport, TcpTransport
 
 
 class MspTests(unittest.TestCase):
+    @staticmethod
+    def board_frame(identifier=b'SITL'):
+        payload = identifier + b'\x00\x00'
+        body = bytes((len(payload), 4)) + payload
+        checksum = 0
+        for byte in body:
+            checksum ^= byte
+        return b'$M>' + body + bytes((checksum,))
+
+    def test_board_identifier_accepts_fragmented_reply(self):
+        transport = Mock()
+        frame = self.board_frame()
+        transport.receive.side_effect = [frame[:3], frame[3:]]
+        self.assertEqual(read_board_identifier(transport), 'SITL')
+        transport.send.assert_called_once_with(b'$M<\x00\x04\x04')
+
+    def test_board_identifier_can_be_another_target(self):
+        transport = Mock()
+        transport.receive.return_value = self.board_frame(b'ABCD')
+        self.assertEqual(read_board_identifier(transport), 'ABCD')
+
+    def test_board_identifier_rejects_bad_frames(self):
+        valid = self.board_frame()
+        short = b'$M>\x02\x04XX\x06'
+        for frame in (valid[:-1] + bytes((valid[-1] ^ 1,)), short):
+            transport = Mock()
+            transport.receive.return_value = frame
+            with self.subTest(frame=frame), self.assertRaises((ValueError, TimeoutError)):
+                read_board_identifier(transport, timeout_s=0.01)
+
+    def test_board_identifier_times_out(self):
+        transport = Mock()
+        transport.receive.side_effect = TimeoutError()
+        with self.assertRaises(TimeoutError):
+            read_board_identifier(transport, timeout_s=0.01)
+
     def test_frame(self):
         self.assertEqual(build_rc_message(RcChannels((1000,) * 8)), b'$M<\x10\xc8' + b'\xe8\x03' * 8 + b'\xd8')
 

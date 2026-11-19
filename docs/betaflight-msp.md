@@ -65,6 +65,12 @@ with socket.create_connection(("127.0.0.1", 5761), timeout=2) as connection:
 
 ## SITL and connections
 
+`beta_client.msp.read_board_identifier(transport)` sends `MSP_BOARD_INFO` on an
+open TCP transport and returns the four-character board identifier after
+validating the response. The Betaflight SITL target reports `SITL`. A timeout,
+invalid frame, or closed connection raises an exception; the caller decides
+whether lack of confirmation should stop its workflow.
+
 Software-in-the-loop (SITL) runs Betaflight firmware on a computer. A simulator supplies simulated sensor data and receives motor outputs, while a client can use MSP to inspect the flight controller.
 
 ```mermaid

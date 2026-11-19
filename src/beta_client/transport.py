@@ -30,6 +30,10 @@ class TcpTransport:
         """Send a complete message, raising on write timeout or connection failure."""
         self.connection.sendall(message)
 
+    def receive(self, max_bytes: int) -> bytes:
+        """Read available TCP bytes using the configured socket timeout."""
+        return self.connection.recv(max_bytes)
+
     def drain_responses(self) -> None:
         """Discard up to one buffer of replies without waiting for incoming data."""
         timeout = self.connection.gettimeout()
