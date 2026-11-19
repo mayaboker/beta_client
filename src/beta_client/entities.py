@@ -1,6 +1,7 @@
 """Immutable MAVLink payloads, shared RC values, and telemetry state."""
 
 from dataclasses import dataclass
+from .timesync import TimeSyncStatus
 
 @dataclass(frozen=True)
 class Heartbeat:
@@ -268,3 +269,4 @@ class TelemetrySnapshot:
     global_position_int_at: float = 0.0
     gps_raw_int_hz: float = 0.0
     global_position_int_hz: float = 0.0
+    timesync: TimeSyncStatus | None = None

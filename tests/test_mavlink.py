@@ -19,7 +19,7 @@ def message(kind, source=(1, 1), **fields):
 
 
 class Connection:
-    def __init__(self, result=0, acknowledge=True):
+    def __init__(self, result=0, acknowledge=True, sync_reply=True):
         self.messages = Queue()
         self.messages.put(message('HEARTBEAT', type=2, base_mode=128))
         self.mav = self
@@ -28,6 +28,8 @@ class Connection:
         self.operations = []
         self.commands = []
         self.closed = threading.Event()
+        self.sync_requests = []
+        self.sync_reply = sync_reply
 
     def recv_match(self, **kwargs):
         self.operations.append(threading.get_ident())
@@ -46,6 +48,12 @@ class Connection:
         self.messages.put(message('VFR_HUD', alt=4.5))
         if self.acknowledge:
             self.messages.put(message('COMMAND_ACK', command=args[2], result=self.result))
+
+    def timesync_send(self, tc1, ts1):
+        self.operations.append(threading.get_ident())
+        self.sync_requests.append((tc1, ts1))
+        if self.sync_reply:
+            self.messages.put(message('TIMESYNC', tc1=ts1 - 1_000_000_000, ts1=ts1))
 
     def close(self):
         self.operations.append(threading.get_ident())
@@ -187,6 +195,37 @@ class MavlinkTests(unittest.TestCase):
                 for _ in range(100):
                     telemetry.snapshot()
                 self.assertNotIn(threading.get_ident(), connection.operations)
+
+    def test_timesync_is_opt_in_and_worker_owned(self):
+        connection = Connection()
+        with patch('beta_client.mavlink.mavutil.mavlink_connection', return_value=connection), \
+                patch('beta_client.mavlink.TIMESYNC_PERIOD_S', 0.001):
+            with MavlinkTelemetry('/dev/test') as telemetry:
+                self.assertEqual(connection.sync_requests, [])
+                telemetry.enable_timesync()
+                self.wait_for(lambda: telemetry.snapshot().timesync is not None
+                              and telemetry.snapshot().timesync.accepted_samples >= 5)
+                status = telemetry.snapshot().timesync
+                self.assertTrue(status.fresh(time.monotonic()))
+                self.assertAlmostEqual(status.offset_ns, 1_000_000_000, delta=40_000_000)
+                self.assertTrue(all(tc1 == 0 for tc1, _ in connection.sync_requests))
+                self.assertNotIn(threading.get_ident(), connection.operations)
+
+    def test_timesync_filters_other_vehicle_and_wrong_echo(self):
+        connection = Connection(sync_reply=False)
+        with patch('beta_client.mavlink.mavutil.mavlink_connection', return_value=connection):
+            with MavlinkTelemetry('/dev/test') as telemetry:
+                telemetry.enable_timesync()
+                self.wait_for(lambda: bool(connection.sync_requests))
+                sent = connection.sync_requests[-1][1]
+                connection.messages.put(message('TIMESYNC', source=(2, 1),
+                                                tc1=sent - 1_000_000_000, ts1=sent))
+                connection.messages.put(message('TIMESYNC', tc1=sent - 1_000_000_000,
+                                                ts1=sent - 1))
+                time.sleep(0.02)
+                self.assertIsNone(telemetry.snapshot().timesync)
+                connection.messages.put(message('TIMESYNC', tc1=sent - 1_000_000_000, ts1=sent))
+                self.wait_for(lambda: telemetry.snapshot().timesync is not None)
 
 
 class RateRequestTests(unittest.TestCase):

@@ -9,6 +9,7 @@ from typing import Self, TypeVar, Any
 from pymavlink import mavutil
 from dataclasses import fields, MISSING
 from beta_client.entities import GpsRawInt, GlobalPositionInt, Attitude, Heartbeat, VfrHud, TelemetrySnapshot, CommandLong, CommandAck
+from beta_client.timesync import TimeSyncEstimator
 
 DEFAULT_BAUD = 57600
 # Allow firmware startup and a bounded wait for each rate acknowledgement.
@@ -17,6 +18,7 @@ ACK_TIMEOUT = 5.0
 # Wake periodically to observe shutdown even when telemetry is silent.
 RECEIVE_WAIT = 0.1
 RATE_WINDOW = 1.0
+TIMESYNC_PERIOD_S = 0.2
 MICROSECONDS_PER_SECOND = 1_000_000
 MAX_MESSAGE_ID = 0xFFFFFF
 MAX_INTERVAL_US = 0x7FFFFFFF
@@ -51,6 +53,16 @@ class MavlinkTelemetry:
         self._snapshot = TelemetrySnapshot()
         self._request_lock = threading.Lock()
         self._pending: _RateRequest | None = None
+        self._timesync_enabled = False
+
+    def enable_timesync(self) -> None:
+        """Request vehicle-to-host clock alignment on the telemetry worker."""
+        with self._lock:
+            if self._error is not None:
+                raise RuntimeError('MAVLink telemetry failed') from self._error
+            if not self._ready.is_set() or self._stop.is_set():
+                raise RuntimeError('Telemetry must be started and open')
+            self._timesync_enabled = True
 
     def start(self) -> Self:
         """Start once and wait for a vehicle heartbeat."""
@@ -127,6 +139,8 @@ class MavlinkTelemetry:
             source = None
             counts = {'VFR_HUD': 0, 'ATTITUDE': 0, 'GPS_RAW_INT': 0, 'GLOBAL_POSITION_INT': 0}
             rate_started = time.monotonic()
+            timesync = TimeSyncEstimator()
+            next_timesync_at = 0.0
 
             def receive(timeout=RECEIVE_WAIT):
                 nonlocal source, rate_started
@@ -156,6 +170,10 @@ class MavlinkTelemetry:
                     elif kind == 'GLOBAL_POSITION_INT':
                         counts[kind] += 1
                         updates.update(global_position_int=decode(GlobalPositionInt, message), global_position_int_at=now)
+                    elif kind == 'TIMESYNC':
+                        status = timesync.reply(message.tc1, message.ts1, time.monotonic_ns())
+                        if status is not None:
+                            updates['timesync'] = status
                 elapsed = now - rate_started
                 if elapsed >= RATE_WINDOW:
                     updates.update(vfr_hud_hz=counts['VFR_HUD'] / elapsed,
@@ -178,7 +196,12 @@ class MavlinkTelemetry:
             while not self._stop.is_set():
                 with self._lock:
                     request = self._pending
+                    sync_enabled = self._timesync_enabled
                 if request is None:
+                    now = time.monotonic()
+                    if sync_enabled and now >= next_timesync_at:
+                        connection.mav.timesync_send(0, timesync.request(time.monotonic_ns()))
+                        next_timesync_at = now + TIMESYNC_PERIOD_S
                     receive()
                     continue
                 command = CommandLong(*source, mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
